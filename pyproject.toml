@@ -1,0 +1,10 @@
+[project]
+name = "telepromp-app"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pyqt6>=6.4.0",
+    "pyside6>=6.10.2",
+]

@@ -1,1 +1,6 @@
-PyQt6==6.6.1
+# PyQt6 Version (recommended for Python 3.8+)
+PyQt6>=6.4.0
+
+# Alternative: PySide6 Version (better compatibility)
+# Uncomment the line below and comment PyQt6 if you encounter installation issues
+# PySide6>=6.4.0
