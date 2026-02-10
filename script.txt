@@ -1,0 +1,15 @@
+I'm Ahmed, I've been a machine learning engineer for the last 7+ years.
+
+And I have seen a lot in these 7 years
+
+I've spent most of my career building ML systems fully hands-on in Python, frameworks
+- like PyTorch,
+- scikit-learn,
+- and more recently LLM-based stacks >>
+- such as LangChain. Ollama vLLM
+
+I have built production-grade ML pipelines from scratch, designed scalable architectures, and optimized models for performance.
+
+My work has spanned across various domains including natural language processing, computer vision, and recommendation systems.
+
+This teleprompter will help me deliver smooth presentations and videos without losing my place!
