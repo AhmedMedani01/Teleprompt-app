@@ -9,10 +9,12 @@ import os
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFrame, QVBoxLayout,
     QHBoxLayout, QTextEdit, QPushButton, QMenu, QLabel,
-    QStackedWidget, QWidget, QSizePolicy
+    QStackedWidget, QWidget, QSizePolicy, QLineEdit
 )
 from PySide6.QtCore import Qt, QPoint
-from PySide6.QtGui import QAction, QFont, QTextCharFormat, QTextCursor
+from PySide6.QtGui import (
+    QAction, QFont, QTextCharFormat, QTextCursor, QTextDocument, QColor
+)
 
 
 class EditorPage(QWidget):
@@ -116,8 +118,140 @@ class EditorPage(QWidget):
         self.underline_btn.clicked.connect(self.toggle_underline)
         tb_layout.addWidget(self.underline_btn)
 
+        # --- Separator ---
+        sep1 = QFrame()
+        sep1.setFixedWidth(1)
+        sep1.setFixedHeight(20)
+        sep1.setStyleSheet("background-color: rgba(150, 150, 160, 0.5);")
+        tb_layout.addWidget(sep1)
+
+        # Undo button
+        self.undo_btn = QPushButton("↩")
+        self.undo_btn.setFont(QFont("Arial", 14))
+        self.undo_btn.setStyleSheet(btn_style)
+        self.undo_btn.setToolTip("Undo (Ctrl+Z)")
+        self.undo_btn.clicked.connect(lambda: self.editor.undo())
+        tb_layout.addWidget(self.undo_btn)
+
+        # Redo button
+        self.redo_btn = QPushButton("↪")
+        self.redo_btn.setFont(QFont("Arial", 14))
+        self.redo_btn.setStyleSheet(btn_style)
+        self.redo_btn.setToolTip("Redo (Ctrl+Y)")
+        self.redo_btn.clicked.connect(lambda: self.editor.redo())
+        tb_layout.addWidget(self.redo_btn)
+
+        # --- Separator ---
+        sep2 = QFrame()
+        sep2.setFixedWidth(1)
+        sep2.setFixedHeight(20)
+        sep2.setStyleSheet("background-color: rgba(150, 150, 160, 0.5);")
+        tb_layout.addWidget(sep2)
+
+        # Find & Replace toggle
+        self.find_btn = QPushButton("🔍")
+        self.find_btn.setFont(QFont("Arial", 13))
+        self.find_btn.setCheckable(True)
+        self.find_btn.setStyleSheet(btn_style)
+        self.find_btn.setToolTip("Find & Replace")
+        self.find_btn.clicked.connect(self.toggle_find_panel)
+        tb_layout.addWidget(self.find_btn)
+
         tb_layout.addStretch()
         outer_layout.addWidget(toolbar)
+
+        # --- Find & Replace Panel ---
+        self.find_panel = QFrame()
+        self.find_panel.setObjectName("findPanel")
+        self.find_panel.setStyleSheet("""
+            QFrame#findPanel {
+                background-color: rgba(60, 60, 68, 0.9);
+                border-radius: 6px;
+            }
+            QLineEdit {
+                background-color: #ffffff;
+                color: #222;
+                border: 1px solid rgba(180, 180, 190, 0.6);
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #6aa5e8;
+            }
+            QLabel {
+                color: rgba(200, 200, 210, 0.9);
+                font-size: 12px;
+            }
+        """)
+        self.find_panel.hide()
+
+        fp_layout = QVBoxLayout(self.find_panel)
+        fp_layout.setContentsMargins(12, 10, 12, 10)
+        fp_layout.setSpacing(8)
+
+        # Find row
+        find_row = QHBoxLayout()
+        find_row.setSpacing(6)
+        find_label = QLabel("Find")
+        find_label.setFixedWidth(52)
+        self.find_input = QLineEdit()
+        self.find_input.setPlaceholderText("Find in text…")
+        self.find_input.returnPressed.connect(self.find_next)
+
+        fr_btn_style = """
+            QPushButton {
+                background-color: rgba(90, 90, 100, 0.7);
+                color: white; border: none; border-radius: 4px;
+                font-size: 13px; padding: 4px 10px; min-width: 28px;
+            }
+            QPushButton:hover { background-color: rgba(120, 120, 135, 0.85); }
+            QPushButton:pressed { background-color: rgba(60, 60, 70, 0.95); }
+        """
+
+        self.find_prev_btn = QPushButton("↑")
+        self.find_prev_btn.setStyleSheet(fr_btn_style)
+        self.find_prev_btn.setToolTip("Previous match")
+        self.find_prev_btn.clicked.connect(self.find_prev)
+
+        self.find_next_btn = QPushButton("↓")
+        self.find_next_btn.setStyleSheet(fr_btn_style)
+        self.find_next_btn.setToolTip("Next match")
+        self.find_next_btn.clicked.connect(self.find_next)
+
+        self.match_label = QLabel("")
+        self.match_label.setFixedWidth(60)
+
+        find_row.addWidget(find_label)
+        find_row.addWidget(self.find_input, 1)
+        find_row.addWidget(self.find_prev_btn)
+        find_row.addWidget(self.find_next_btn)
+        find_row.addWidget(self.match_label)
+        fp_layout.addLayout(find_row)
+
+        # Replace row
+        replace_row = QHBoxLayout()
+        replace_row.setSpacing(6)
+        replace_label = QLabel("Replace")
+        replace_label.setFixedWidth(52)
+        self.replace_input = QLineEdit()
+        self.replace_input.setPlaceholderText("Replace with…")
+
+        self.replace_btn = QPushButton("Replace")
+        self.replace_btn.setStyleSheet(fr_btn_style)
+        self.replace_btn.clicked.connect(self.replace_current)
+
+        self.replace_all_btn = QPushButton("Replace All")
+        self.replace_all_btn.setStyleSheet(fr_btn_style)
+        self.replace_all_btn.clicked.connect(self.replace_all)
+
+        replace_row.addWidget(replace_label)
+        replace_row.addWidget(self.replace_input, 1)
+        replace_row.addWidget(self.replace_btn)
+        replace_row.addWidget(self.replace_all_btn)
+        fp_layout.addLayout(replace_row)
+
+        outer_layout.addWidget(self.find_panel)
 
         # --- White text editor ---
         self.editor = QTextEdit()
@@ -199,6 +333,63 @@ class EditorPage(QWidget):
         self.bold_btn.setChecked(fmt.fontWeight() == QFont.Weight.Bold)
         self.italic_btn.setChecked(fmt.fontItalic())
         self.underline_btn.setChecked(fmt.fontUnderline())
+
+    # ----- Find & Replace -----
+
+    def toggle_find_panel(self):
+        visible = self.find_btn.isChecked()
+        self.find_panel.setVisible(visible)
+        if visible:
+            self.find_input.setFocus()
+            self.find_input.selectAll()
+
+    def find_next(self):
+        self._do_find(backward=False)
+
+    def find_prev(self):
+        self._do_find(backward=True)
+
+    def _do_find(self, backward=False):
+        text = self.find_input.text()
+        if not text:
+            self.match_label.setText("")
+            return
+        flags = QTextDocument.FindFlag(0)
+        if backward:
+            flags |= QTextDocument.FindFlag.FindBackward
+        found = self.editor.find(text, flags)
+        if not found:
+            # Wrap around: move cursor to start/end and try again
+            cursor = self.editor.textCursor()
+            if backward:
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+            else:
+                cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.editor.setTextCursor(cursor)
+            found = self.editor.find(text, flags)
+        self.match_label.setText("Found" if found else "No match")
+
+    def replace_current(self):
+        cursor = self.editor.textCursor()
+        if cursor.hasSelection() and cursor.selectedText() == self.find_input.text():
+            cursor.insertText(self.replace_input.text())
+        self.find_next()
+
+    def replace_all(self):
+        text = self.find_input.text()
+        replacement = self.replace_input.text()
+        if not text:
+            return
+        # Move to start
+        cursor = self.editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        self.editor.setTextCursor(cursor)
+        count = 0
+        while self.editor.find(text):
+            tc = self.editor.textCursor()
+            tc.insertText(replacement)
+            count += 1
+        self.match_label.setText(f"{count} replaced")
 
     def load_script(self):
         """Pre-load script.txt into the editor if it exists."""
