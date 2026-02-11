@@ -504,7 +504,7 @@ class TeleprompterPage(QWidget):
                 if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                     self.toggle_scroll()
                     return True
-            elif event.type() == QEvent.Type.MouseButtonPress:
+            elif event.type() == QEvent.Type.MouseButtonRelease:
                 if event.button() == Qt.MouseButton.LeftButton:
                     self.toggle_scroll()
                     return True
@@ -544,7 +544,7 @@ class TeleprompterWindow(QMainWindow):
         self.main_frame = QFrame()
         self.main_frame.setStyleSheet("""
             QFrame#mainFrame {
-                background-color: rgba(128, 128, 128, 0.5);
+                background-color: rgba(0, 0, 0, 0.5);
                 border-radius: 10px;
             }
         """)
