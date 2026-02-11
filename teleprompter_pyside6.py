@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QTextEdit, QPushButton, QMenu, QLabel,
     QStackedWidget, QWidget, QSizePolicy, QLineEdit
 )
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QTimer, QElapsedTimer
 from PySide6.QtGui import (
     QAction, QFont, QTextCharFormat, QTextCursor, QTextDocument, QColor
 )
@@ -407,11 +407,19 @@ class EditorPage(QWidget):
 
 
 class TeleprompterPage(QWidget):
-    """Page 2: The actual teleprompter display."""
+    """Page 2: The actual teleprompter display with auto-scroll."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.is_scrolling = False
+        self.scroll_speed = 1        # pixels per tick
+        self.scroll_interval = 50    # ms between ticks
         self.init_ui()
+
+        # Scroll timer
+        self.scroll_timer = QTimer(self)
+        self.scroll_timer.setInterval(self.scroll_interval)
+        self.scroll_timer.timeout.connect(self._scroll_tick)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -433,13 +441,74 @@ class TeleprompterPage(QWidget):
             }
         """)
         self.text_display.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        # Click on text area toggles scrolling
+        self.text_display.installEventFilter(self)
         layout.addWidget(self.text_display, 1)
+
+        # Hint label (shown when scrolling is paused)
+        self.hint_label = QLabel("Press Enter or click to start scrolling")
+        self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint_label.setStyleSheet("""
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+            padding: 4px;
+        """)
+        layout.addWidget(self.hint_label)
 
     def set_content_html(self, html):
         self.text_display.setHtml(html)
+        # Reset scroll to top
+        self.text_display.verticalScrollBar().setValue(0)
 
     def set_content_plain(self, text):
         self.text_display.setPlainText(text)
+        self.text_display.verticalScrollBar().setValue(0)
+
+    def toggle_scroll(self):
+        """Start or pause auto-scrolling."""
+        if self.is_scrolling:
+            self.pause_scroll()
+        else:
+            self.start_scroll()
+
+    def start_scroll(self):
+        self.is_scrolling = True
+        self.scroll_timer.start()
+        self.hint_label.setText("Scrolling… (press Enter or click to pause)")
+
+    def pause_scroll(self):
+        self.is_scrolling = False
+        self.scroll_timer.stop()
+        self.hint_label.setText("Paused — press Enter or click to resume")
+
+    def stop_scroll(self):
+        """Fully stop and reset scroll state."""
+        self.is_scrolling = False
+        self.scroll_timer.stop()
+        self.hint_label.setText("Press Enter or click to start scrolling")
+
+    def _scroll_tick(self):
+        sb = self.text_display.verticalScrollBar()
+        if sb.value() >= sb.maximum():
+            self.pause_scroll()
+            self.hint_label.setText("End of script")
+            return
+        sb.setValue(sb.value() + self.scroll_speed)
+
+    # --- Event filter: capture Enter key and mouse clicks ---
+
+    def eventFilter(self, obj, event):
+        if obj is self.text_display:
+            from PySide6.QtCore import QEvent
+            if event.type() == QEvent.Type.KeyPress:
+                if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    self.toggle_scroll()
+                    return True
+            elif event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self.toggle_scroll()
+                    return True
+        return super().eventFilter(obj, event)
 
 
 class TeleprompterWindow(QMainWindow):
@@ -452,6 +521,12 @@ class TeleprompterWindow(QMainWindow):
 
         # For dragging
         self.drag_position = QPoint()
+
+        # Session elapsed timer
+        self.elapsed_timer = QElapsedTimer()
+        self.elapsed_display_timer = QTimer(self)
+        self.elapsed_display_timer.setInterval(1000)
+        self.elapsed_display_timer.timeout.connect(self._update_elapsed)
 
         self.init_ui()
 
@@ -539,6 +614,17 @@ class TeleprompterWindow(QMainWindow):
 
         header_layout.addStretch()
 
+        # Elapsed timer label
+        self.timer_label = QLabel("00:00")
+        self.timer_label.setStyleSheet("""
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 12px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            padding: 0 6px;
+        """)
+        self.timer_label.setToolTip("Session elapsed time")
+        header_layout.addWidget(self.timer_label)
+
         # Pin button
         self.pin_button = QPushButton("📌")
         self.pin_button.setFixedSize(25, 20)
@@ -591,6 +677,7 @@ class TeleprompterWindow(QMainWindow):
         self.back_button.hide()
         self.pin_button.hide()
         self.eye_button.hide()
+        self.timer_label.hide()
         self.title_label.setText("Teleprompter")
         # Full opacity for editor page
         self.setWindowOpacity(0.95)
@@ -600,6 +687,7 @@ class TeleprompterWindow(QMainWindow):
         self.back_button.show()
         self.pin_button.show()
         self.eye_button.show()
+        self.timer_label.show()
         self.title_label.setText("Teleprompter")
         # Restore configured opacity
         self.is_hidden = False
@@ -611,10 +699,25 @@ class TeleprompterWindow(QMainWindow):
         html = self.editor_page.get_html()
         self.teleprompter_page.set_content_html(html)
         self._show_teleprompter_page()
+        # Start session timer
+        self.elapsed_timer.start()
+        self.elapsed_display_timer.start()
+        self.timer_label.setText("00:00")
 
     def go_to_editor(self):
         """Switch back to editor page."""
+        # Stop scrolling and session timer
+        self.teleprompter_page.stop_scroll()
+        self.elapsed_display_timer.stop()
         self._show_editor_page()
+
+    def _update_elapsed(self):
+        """Update the elapsed timer label every second."""
+        elapsed_ms = self.elapsed_timer.elapsed()
+        total_secs = elapsed_ms // 1000
+        mins = total_secs // 60
+        secs = total_secs % 60
+        self.timer_label.setText(f"{mins:02d}:{secs:02d}")
 
     # ------------------------------------------------------------------ #
     #  Context menu (teleprompter page)
