@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QPoint, QTimer, QElapsedTimer, QThread, Signal, QBuffer
 from PySide6.QtGui import (
     QAction, QFont, QTextCharFormat, QTextCursor, QTextDocument, QColor,
-    QGuiApplication, QPixmap
+    QGuiApplication, QPixmap, QCursor
 )
 
 
@@ -1152,7 +1152,95 @@ class TeleprompterWindow(QMainWindow):
             self.setWindowOpacity(self.normal_opacity)
             self.eye_button.setText("👁")
 
-    # ------------------------------------------------------------------ #
+    def toggle_always_on_top(self):
+        """Toggle whether the window stays above all other windows."""
+        self._always_on_top = not self._always_on_top
+
+        if self._always_on_top:
+            self.ontop_button.setStyleSheet(self._btn_style() + """
+                QPushButton { background-color: rgba(100, 150, 100, 0.8); }
+            """)
+            self.ontop_button.setToolTip("Always on top (ON)")
+        else:
+            self.ontop_button.setStyleSheet(self._btn_style())
+            self.ontop_button.setToolTip("Always on top (OFF)")
+
+        # Use Windows API directly to avoid window recreation / z-order loss
+        if sys.platform == 'win32':
+            hwnd = int(self.winId())
+            HWND_TOPMOST = -1
+            HWND_NOTOPMOST = -2
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOACTIVATE = 0x0010
+            insert_after = HWND_TOPMOST if self._always_on_top else HWND_NOTOPMOST
+            ctypes.windll.user32.SetWindowPos(
+                hwnd, insert_after, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+            )
+
+    def toggle_click_through(self):
+        """Toggle click-through mode — content area passes clicks to apps behind."""
+        self._click_through = not self._click_through
+        if self._click_through:
+            self.clickthrough_button.setStyleSheet(self._btn_style() + """
+                QPushButton { background-color: rgba(200, 130, 50, 0.85); }
+            """)
+            self.clickthrough_button.setToolTip("Click-through (ON) — clicks pass to apps behind")
+            # Start polling timer to selectively toggle WS_EX_TRANSPARENT
+            if not hasattr(self, '_ct_timer'):
+                self._ct_timer = QTimer(self)
+                self._ct_timer.setInterval(50)
+                self._ct_timer.timeout.connect(self._update_click_through)
+            self._ct_timer.start()
+            self._set_window_transparent(True)
+        else:
+            self.clickthrough_button.setStyleSheet(self._btn_style())
+            self.clickthrough_button.setToolTip("Click-through (OFF)")
+            if hasattr(self, '_ct_timer'):
+                self._ct_timer.stop()
+            self._set_window_transparent(False)
+
+    def _set_window_transparent(self, transparent):
+        """Set or remove WS_EX_TRANSPARENT on the window (Windows only)."""
+        if sys.platform != 'win32':
+            return
+        hwnd = int(self.winId())
+        GWL_EXSTYLE = -20
+        WS_EX_TRANSPARENT = 0x00000020
+        style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        if transparent:
+            style |= WS_EX_TRANSPARENT
+        else:
+            style &= ~WS_EX_TRANSPARENT
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+
+        # Re-apply always-on-top so style changes don't reset z-order
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_NOACTIVATE = 0x0010
+        insert_after = -1 if self._always_on_top else -2  # TOPMOST / NOTOPMOST
+        ctypes.windll.user32.SetWindowPos(
+            hwnd, insert_after, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+        )
+
+    def _update_click_through(self):
+        """Polling callback: disable transparency over the header so buttons work."""
+        if not self._click_through:
+            return
+        cursor_pos = QCursor.pos()
+        local_pos = self.mapFromGlobal(cursor_pos)
+        header_h = self.header.height()
+        in_header = (
+            0 <= local_pos.x() <= self.width()
+            and 0 <= local_pos.y() <= header_h
+        )
+        if in_header:
+            self._set_window_transparent(False)
+        else:
+            self._set_window_transparent(True)
+
     #  Window dragging
     # ------------------------------------------------------------------ #
 
