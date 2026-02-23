@@ -6,15 +6,17 @@ Features a text editor page with formatting controls and a teleprompter display 
 
 import sys
 import os
+import io
 import ctypes
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFrame, QVBoxLayout,
     QHBoxLayout, QTextEdit, QPushButton, QMenu, QLabel,
     QStackedWidget, QWidget, QSizePolicy, QLineEdit
 )
-from PySide6.QtCore import Qt, QPoint, QTimer, QElapsedTimer
+from PySide6.QtCore import Qt, QPoint, QTimer, QElapsedTimer, QThread, Signal, QBuffer
 from PySide6.QtGui import (
-    QAction, QFont, QTextCharFormat, QTextCursor, QTextDocument, QColor
+    QAction, QFont, QTextCharFormat, QTextCursor, QTextDocument, QColor,
+    QGuiApplication, QPixmap
 )
 
 
@@ -306,6 +308,35 @@ class EditorPage(QWidget):
         """)
         outer_layout.addWidget(self.start_btn)
 
+        # --- AI Mode button ---
+        self.ai_mode_btn = QPushButton("✨ AI Mode")
+        self.ai_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ai_mode_btn.setFixedHeight(44)
+        self.ai_mode_btn.setStyleSheet("""
+            QPushButton {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #7c3aed, stop:1 #a855f7
+                );
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: 700;
+                letter-spacing: 1px;
+            }
+            QPushButton:hover {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #6d28d9, stop:1 #9333ea
+                );
+            }
+            QPushButton:pressed {
+                background-color: #5b21b6;
+            }
+        """)
+        outer_layout.addWidget(self.ai_mode_btn)
+
         layout.addWidget(outer_frame)
 
     # ----- Formatting helpers -----
@@ -513,6 +544,162 @@ class TeleprompterPage(QWidget):
         return super().eventFilter(obj, event)
 
 
+# -------------------------------------------------------------------- #
+#  AI Worker Thread (runs API call off the UI thread)
+# -------------------------------------------------------------------- #
+
+class AIWorkerThread(QThread):
+    """Background thread for AI vision model calls."""
+    finished = Signal(str)   # emits the response text
+    error = Signal(str)      # emits error message
+
+    def __init__(self, image_bytes: bytes, prompt: str, parent=None):
+        super().__init__(parent)
+        self.image_bytes = image_bytes
+        self.prompt = prompt
+
+    def run(self):
+        try:
+            from ai_model_factory import get_vision_model
+            model = get_vision_model()
+            response = model(self.image_bytes, self.prompt)
+            self.finished.emit(response)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+# -------------------------------------------------------------------- #
+#  AI Mode Page
+# -------------------------------------------------------------------- #
+
+class AIModePage(QWidget):
+    """Page 3: AI assistant mode — capture screen and get AI analysis."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # --- Outer frame ---
+        outer_frame = QFrame()
+        outer_frame.setObjectName("aiOuter")
+        outer_frame.setStyleSheet("""
+            QFrame#aiOuter {
+                background-color: rgba(30, 25, 45, 0.94);
+                border-radius: 10px;
+            }
+        """)
+        outer_layout = QVBoxLayout(outer_frame)
+        outer_layout.setContentsMargins(16, 12, 16, 16)
+        outer_layout.setSpacing(10)
+
+        # --- Capture toolbar ---
+        capture_bar = QFrame()
+        capture_bar.setObjectName("captureBar")
+        capture_bar.setFixedHeight(44)
+        capture_bar.setStyleSheet("""
+            QFrame#captureBar {
+                background-color: rgba(55, 45, 80, 0.85);
+                border-radius: 8px;
+            }
+        """)
+        cb_layout = QHBoxLayout(capture_bar)
+        cb_layout.setContentsMargins(12, 6, 12, 6)
+        cb_layout.setSpacing(10)
+
+        # Capture button
+        self.capture_btn = QPushButton("📸  Capture & Analyze")
+        self.capture_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.capture_btn.setFixedHeight(32)
+        self.capture_btn.setStyleSheet("""
+            QPushButton {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #7c3aed, stop:1 #a855f7
+                );
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 4px 18px;
+                letter-spacing: 0.5px;
+            }
+            QPushButton:hover {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #6d28d9, stop:1 #9333ea
+                );
+            }
+            QPushButton:pressed {
+                background-color: #5b21b6;
+            }
+            QPushButton:disabled {
+                background-color: rgba(100, 80, 140, 0.4);
+                color: rgba(255, 255, 255, 0.4);
+            }
+        """)
+        cb_layout.addWidget(self.capture_btn)
+
+        # Status label
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("""
+            color: rgba(200, 180, 255, 0.8);
+            font-size: 12px;
+            padding: 0 8px;
+        """)
+        cb_layout.addWidget(self.status_label)
+        cb_layout.addStretch()
+
+        outer_layout.addWidget(capture_bar)
+
+        # --- AI response canvas ---
+        self.response_display = QTextEdit()
+        self.response_display.setReadOnly(True)
+        self.response_display.setFont(QFont("Consolas", 13))
+        self.response_display.setStyleSheet("""
+            QTextEdit {
+                background-color: rgba(20, 16, 36, 0.95);
+                color: #e2e0f0;
+                border: 1px solid rgba(120, 90, 200, 0.3);
+                border-radius: 8px;
+                padding: 16px;
+                selection-background-color: rgba(120, 80, 220, 0.4);
+            }
+        """)
+        self.response_display.setPlaceholderText(
+            "Click \"📸 Capture & Analyze\" to capture your screen and get AI analysis…"
+        )
+        outer_layout.addWidget(self.response_display, 1)
+
+        layout.addWidget(outer_frame)
+
+    def set_loading(self, loading: bool):
+        """Toggle loading state."""
+        self.capture_btn.setEnabled(not loading)
+        if loading:
+            self.status_label.setText("⏳ Analyzing screenshot…")
+        else:
+            self.status_label.setText("")
+
+    def set_response(self, text: str):
+        """Display the AI response."""
+        self.response_display.setPlainText(text)
+
+    def set_error(self, msg: str):
+        """Display an error."""
+        self.response_display.setPlainText(f"❌ Error: {msg}")
+
+    def clear(self):
+        """Reset the canvas."""
+        self.response_display.clear()
+        self.status_label.setText("")
+
+
 class TeleprompterWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -523,6 +710,9 @@ class TeleprompterWindow(QMainWindow):
 
         # For dragging
         self.drag_position = QPoint()
+
+        # AI worker thread reference
+        self._ai_worker = None
 
         # Session elapsed timer
         self.elapsed_timer = QElapsedTimer()
@@ -570,6 +760,7 @@ class TeleprompterWindow(QMainWindow):
         # Page 0 – Editor
         self.editor_page = EditorPage()
         self.editor_page.start_btn.clicked.connect(self.go_to_teleprompter)
+        self.editor_page.ai_mode_btn.clicked.connect(self.go_to_ai_mode)
         self.stack.addWidget(self.editor_page)
 
         # Page 1 – Teleprompter
@@ -578,6 +769,11 @@ class TeleprompterWindow(QMainWindow):
             self.show_context_menu
         )
         self.stack.addWidget(self.teleprompter_page)
+
+        # Page 2 – AI Mode
+        self.ai_page = AIModePage()
+        self.ai_page.capture_btn.clicked.connect(self.capture_and_analyze)
+        self.stack.addWidget(self.ai_page)
 
         main_layout.addWidget(self.stack, 1)
         self.setCentralWidget(self.main_frame)
@@ -612,6 +808,34 @@ class TeleprompterWindow(QMainWindow):
         self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.clicked.connect(self.go_to_editor)
         header_layout.addWidget(self.back_button)
+
+        # AI / Prompter switch button in header
+        self.mode_switch_btn = QPushButton("✨ AI")
+        self.mode_switch_btn.setFixedHeight(20)
+        self.mode_switch_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mode_switch_btn.setStyleSheet("""
+            QPushButton {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(100, 60, 200, 0.7), stop:1 rgba(160, 80, 240, 0.7)
+                );
+                color: white;
+                border: none;
+                border-radius: 3px;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 2px 10px;
+            }
+            QPushButton:hover {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(120, 70, 220, 0.85), stop:1 rgba(180, 100, 255, 0.85)
+                );
+            }
+        """)
+        self.mode_switch_btn.setToolTip("Switch between AI and Prompter mode")
+        self.mode_switch_btn.clicked.connect(self._toggle_mode)
+        header_layout.addWidget(self.mode_switch_btn)
 
         # Title
         self.title_label = QLabel("Teleprompter")
@@ -684,6 +908,8 @@ class TeleprompterWindow(QMainWindow):
         self.pin_button.hide()
         self.eye_button.hide()
         self.timer_label.hide()
+        self.mode_switch_btn.setText("✨ AI")
+        self.mode_switch_btn.show()
         self.title_label.setText("Teleprompter")
         # Full opacity for editor page
         self.setWindowOpacity(0.95)
@@ -694,11 +920,32 @@ class TeleprompterWindow(QMainWindow):
         self.pin_button.show()
         self.eye_button.show()
         self.timer_label.show()
+        self.mode_switch_btn.setText("✨ AI")
+        self.mode_switch_btn.show()
         self.title_label.setText("Teleprompter")
         # Restore configured opacity
         self.is_hidden = False
         self.eye_button.setText("👁")
         self.setWindowOpacity(self.normal_opacity)
+
+    def _show_ai_page(self):
+        self.stack.setCurrentIndex(2)
+        self.back_button.hide()
+        self.pin_button.hide()
+        self.eye_button.hide()
+        self.timer_label.hide()
+        self.mode_switch_btn.setText("📝 Prompter")
+        self.mode_switch_btn.show()
+        self.title_label.setText("✨ AI Assistant")
+        self.setWindowOpacity(0.95)
+
+    def _toggle_mode(self):
+        """Switch between AI mode and Prompter (editor) mode."""
+        current = self.stack.currentIndex()
+        if current == 2:  # AI page → Editor
+            self.go_to_editor_from_ai()
+        else:  # Editor or Teleprompter → AI
+            self.go_to_ai_mode()
 
     def go_to_teleprompter(self):
         """Transfer editor content → teleprompter display and switch page."""
@@ -717,6 +964,15 @@ class TeleprompterWindow(QMainWindow):
         self.elapsed_display_timer.stop()
         self._show_editor_page()
 
+    def go_to_ai_mode(self):
+        """Switch to AI mode with an empty canvas."""
+        self.ai_page.clear()
+        self._show_ai_page()
+
+    def go_to_editor_from_ai(self):
+        """Switch from AI mode back to editor."""
+        self._show_editor_page()
+
     def _update_elapsed(self):
         """Update the elapsed timer label every second."""
         elapsed_ms = self.elapsed_timer.elapsed()
@@ -724,6 +980,73 @@ class TeleprompterWindow(QMainWindow):
         mins = total_secs // 60
         secs = total_secs % 60
         self.timer_label.setText(f"{mins:02d}:{secs:02d}")
+
+    # ------------------------------------------------------------------ #
+    #  AI Mode – Screen Capture & Analysis
+    # ------------------------------------------------------------------ #
+
+    def capture_and_analyze(self):
+        """Capture the screen (quietly) and send to AI for analysis."""
+        self.ai_page.set_loading(True)
+
+        # 1. Temporarily hide the window so it doesn't appear in the screenshot
+        self.hide()
+        QApplication.processEvents()  # ensure repaint
+        QTimer.singleShot(200, self._do_capture)
+
+    def _do_capture(self):
+        """Take the screenshot and restore the window."""
+        try:
+            screen = QGuiApplication.primaryScreen()
+            if screen is None:
+                self.show()
+                self.ai_page.set_error("Could not access primary screen.")
+                self.ai_page.set_loading(False)
+                return
+
+            pixmap = screen.grabWindow(0)  # 0 = entire screen
+
+            # Convert QPixmap → PNG bytes
+            buffer = QBuffer()
+            buffer.open(QBuffer.OpenModeFlag.ReadWrite)
+            pixmap.save(buffer, "PNG")
+            image_bytes = bytes(buffer.data())
+            buffer.close()
+
+        except Exception as e:
+            self.show()
+            self.ai_page.set_error(f"Screenshot failed: {e}")
+            self.ai_page.set_loading(False)
+            return
+
+        # 2. Restore the window
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+        # 3. Send to AI in background thread
+        prompt = (
+            "Analyze the screenshot carefully. "
+            "If there is a question visible, answer it clearly. "
+            "If there is code, explain it and fix any issues. "
+            "If there is a problem or error, provide a solution. "
+            "Give a clear, well-structured response."
+        )
+
+        self._ai_worker = AIWorkerThread(image_bytes, prompt, parent=self)
+        self._ai_worker.finished.connect(self._on_ai_response)
+        self._ai_worker.error.connect(self._on_ai_error)
+        self._ai_worker.start()
+
+    def _on_ai_response(self, text: str):
+        """Handle successful AI response."""
+        self.ai_page.set_loading(False)
+        self.ai_page.set_response(text)
+
+    def _on_ai_error(self, msg: str):
+        """Handle AI error."""
+        self.ai_page.set_loading(False)
+        self.ai_page.set_error(msg)
 
     # ------------------------------------------------------------------ #
     #  Context menu (teleprompter page)
