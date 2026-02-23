@@ -6,6 +6,7 @@ Features a text editor page with formatting controls and a teleprompter display 
 
 import sys
 import os
+import ctypes
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFrame, QVBoxLayout,
     QHBoxLayout, QTextEdit, QPushButton, QMenu, QLabel,
@@ -23,7 +24,7 @@ class EditorPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.init_ui()
-        self.load_script()
+        # Start with empty editor, no pre-loading
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -268,12 +269,14 @@ class EditorPage(QWidget):
         """)
         self.editor.setPlaceholderText("Type or paste your teleprompter script here…")
         self.editor.cursorPositionChanged.connect(self.update_format_buttons)
+        self.editor.textChanged.connect(self.on_text_changed)
         outer_layout.addWidget(self.editor, 1)
 
         # --- Start button ---
         self.start_btn = QPushButton("Start")
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.start_btn.setFixedHeight(44)
+        self.start_btn.setEnabled(False)  # Initially disabled
         self.start_btn.setStyleSheet("""
             QPushButton {
                 background-color: qlineargradient(
@@ -295,6 +298,10 @@ class EditorPage(QWidget):
             }
             QPushButton:pressed {
                 background-color: #c0392b;
+            }
+            QPushButton:disabled {
+                background-color: rgba(100, 100, 110, 0.5);
+                color: rgba(255, 255, 255, 0.4);
             }
         """)
         outer_layout.addWidget(self.start_btn)
@@ -391,15 +398,10 @@ class EditorPage(QWidget):
             count += 1
         self.match_label.setText(f"{count} replaced")
 
-    def load_script(self):
-        """Pre-load script.txt into the editor if it exists."""
-        script_file = "script.txt"
-        if os.path.exists(script_file):
-            try:
-                with open(script_file, "r", encoding="utf-8") as f:
-                    self.editor.setPlainText(f.read())
-            except Exception:
-                pass
+    def on_text_changed(self):
+        """Enable/disable Start button based on text content."""
+        has_text = bool(self.editor.toPlainText().strip())
+        self.start_btn.setEnabled(has_text)
 
     def get_html(self):
         """Return the editor content as HTML (preserves formatting)."""
@@ -539,6 +541,10 @@ class TeleprompterWindow(QMainWindow):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowOpacity(self.normal_opacity)
         self.setGeometry(100, 100, 800, 600)
+        
+        # Enable screen capture protection after window is shown
+        # Using QTimer to ensure window is fully initialized first
+        QTimer.singleShot(100, lambda: self.set_screen_capture_protection(True))
 
         # --- Central container ---
         self.main_frame = QFrame()
@@ -810,6 +816,49 @@ class TeleprompterWindow(QMainWindow):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_position = QPoint()
+
+    # ------------------------------------------------------------------ #
+    #  Screen Capture Protection
+    # ------------------------------------------------------------------ #
+
+    def set_screen_capture_protection(self, enabled=True):
+        """Enable or disable screen capture protection (Windows only).
+        
+        This prevents the window from being captured in screenshots,
+        screen recordings, and screen sharing sessions.
+        
+        Args:
+            enabled (bool): True to enable protection, False to disable
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if sys.platform != 'win32':
+            return False
+        
+        try:
+            # Get window handle
+            hwnd = int(self.winId())
+            
+            # Define Windows API constants
+            WDA_NONE = 0x00000000
+            WDA_EXCLUDEFROMCAPTURE = 0x00000011
+            
+            # Set display affinity
+            user32 = ctypes.windll.user32
+            affinity = WDA_EXCLUDEFROMCAPTURE if enabled else WDA_NONE
+            result = user32.SetWindowDisplayAffinity(hwnd, affinity)
+            
+            if result:
+                status = "enabled" if enabled else "disabled"
+                print(f"Screen capture protection {status}")
+            else:
+                print("Failed to set screen capture protection")
+            
+            return result != 0
+        except Exception as e:
+            print(f"Error setting screen capture protection: {e}")
+            return False
 
 
 def main():
