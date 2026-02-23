@@ -8,6 +8,7 @@ import sys
 import os
 import io
 import ctypes
+import ctypes.wintypes
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFrame, QVBoxLayout,
     QHBoxLayout, QTextEdit, QPushButton, QMenu, QLabel,
@@ -589,7 +590,7 @@ class AIModePage(QWidget):
         outer_frame.setObjectName("aiOuter")
         outer_frame.setStyleSheet("""
             QFrame#aiOuter {
-                background-color: rgba(30, 25, 45, 0.94);
+                background-color: transparent;
                 border-radius: 10px;
             }
         """)
@@ -603,7 +604,7 @@ class AIModePage(QWidget):
         capture_bar.setFixedHeight(44)
         capture_bar.setStyleSheet("""
             QFrame#captureBar {
-                background-color: rgba(55, 45, 80, 0.85);
+                background-color: rgba(55, 45, 80, 0.5);
                 border-radius: 8px;
             }
         """)
@@ -663,9 +664,9 @@ class AIModePage(QWidget):
         self.response_display.setFont(QFont("Consolas", 13))
         self.response_display.setStyleSheet("""
             QTextEdit {
-                background-color: rgba(20, 16, 36, 0.95);
-                color: #e2e0f0;
-                border: 1px solid rgba(120, 90, 200, 0.3);
+                background-color: transparent;
+                color: white;
+                border: none;
                 border-radius: 8px;
                 padding: 16px;
                 selection-background-color: rgba(120, 80, 220, 0.4);
@@ -705,6 +706,8 @@ class TeleprompterWindow(QMainWindow):
         super().__init__()
         self.is_pinned = False
         self.is_hidden = False
+        self._always_on_top = True   # starts on top
+        self._click_through = False  # click-through disabled by default
         self.normal_opacity = 0.5
         self.hidden_opacity = 0.05
 
@@ -871,6 +874,24 @@ class TeleprompterWindow(QMainWindow):
         self.eye_button.clicked.connect(self.toggle_visibility)
         header_layout.addWidget(self.eye_button)
 
+        # Always-on-top button
+        self.ontop_button = QPushButton("📏")
+        self.ontop_button.setFixedSize(25, 20)
+        self.ontop_button.setStyleSheet(self._btn_style() + """
+            QPushButton { background-color: rgba(100, 150, 100, 0.8); }
+        """)
+        self.ontop_button.setToolTip("Toggle always on top")
+        self.ontop_button.clicked.connect(self.toggle_always_on_top)
+        header_layout.addWidget(self.ontop_button)
+
+        # Click-through button
+        self.clickthrough_button = QPushButton("👆")
+        self.clickthrough_button.setFixedSize(25, 20)
+        self.clickthrough_button.setStyleSheet(self._btn_style())
+        self.clickthrough_button.setToolTip("Click-through mode (clicks pass to apps behind)")
+        self.clickthrough_button.clicked.connect(self.toggle_click_through)
+        header_layout.addWidget(self.clickthrough_button)
+
         # Close button
         close_button = QPushButton("✕")
         close_button.setFixedSize(25, 20)
@@ -908,9 +929,15 @@ class TeleprompterWindow(QMainWindow):
         self.pin_button.hide()
         self.eye_button.hide()
         self.timer_label.hide()
+        self.ontop_button.hide()
+        self.clickthrough_button.hide()
         self.mode_switch_btn.setText("✨ AI")
         self.mode_switch_btn.show()
         self.title_label.setText("Teleprompter")
+        # Disable click-through when returning to editor
+        if self._click_through:
+            self._click_through = False
+            self.clickthrough_button.setStyleSheet(self._btn_style())
         # Full opacity for editor page
         self.setWindowOpacity(0.95)
 
@@ -920,6 +947,8 @@ class TeleprompterWindow(QMainWindow):
         self.pin_button.show()
         self.eye_button.show()
         self.timer_label.show()
+        self.ontop_button.show()
+        self.clickthrough_button.show()
         self.mode_switch_btn.setText("✨ AI")
         self.mode_switch_btn.show()
         self.title_label.setText("Teleprompter")
@@ -931,13 +960,18 @@ class TeleprompterWindow(QMainWindow):
     def _show_ai_page(self):
         self.stack.setCurrentIndex(2)
         self.back_button.hide()
-        self.pin_button.hide()
-        self.eye_button.hide()
+        self.pin_button.show()
+        self.eye_button.show()
         self.timer_label.hide()
+        self.ontop_button.show()
+        self.clickthrough_button.show()
         self.mode_switch_btn.setText("📝 Prompter")
         self.mode_switch_btn.show()
         self.title_label.setText("✨ AI Assistant")
-        self.setWindowOpacity(0.95)
+        # Same transparency as teleprompter
+        self.is_hidden = False
+        self.eye_button.setText("👁")
+        self.setWindowOpacity(self.normal_opacity)
 
     def _toggle_mode(self):
         """Switch between AI mode and Prompter (editor) mode."""
